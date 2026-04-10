@@ -1,0 +1,29 @@
+cd med-agent-pro
+git init
+# 创建标准忽略文件
+cat > .gitignore << 'EOF'
+# Python / uv
+__pycache__/
+*.pyc
+.env
+uv.lock
+.python-version
+
+# Go
+*.exe
+*.test
+vendor/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Docker
+*.tar
+EOF
+
+# 初始化目录
+mkdir -p go-gateway python-service
+touch README.md

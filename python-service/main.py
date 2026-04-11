@@ -10,9 +10,7 @@ app = FastAPI(title="Python AI Engine", version="0.1.0")
 
 client = AsyncOpenAI(
     api_key=os.getenv("LLM_API_KEY"),
-    base_url=os.getenv(
-        "LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    ),
+    base_url=os.getenv("LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
 )
 
 
@@ -44,7 +42,7 @@ async def query(req: ChatRequest):
         raise HTTPException(status_code=500, detail=f"LLM API Error: {str(e)}")
 
 
-
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)

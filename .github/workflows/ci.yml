@@ -85,8 +85,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+    #   - name: Verify Images
+    #     run: |
+    #       docker images
+    #       docker run --rm med-agent-go:ci-test /app/gateway --help || true
+    #       docker run --rm med-agent-python:ci-test uv run fastapi --help || true
       - name: Verify Images
         run: |
-          docker images
-          docker run --rm med-agent-go:ci-test /app/gateway --help || true
-          docker run --rm med-agent-python:ci-test uv run fastapi --help || true
+                docker images

@@ -1,7 +1,9 @@
-import os
-from langchain_community.document_loaders import TextLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
+import os  # 读文件、读环境变量
+from langchain_community.document_loaders import TextLoader  # 加载文本文件 (.txt)
+from langchain_text_splitters import RecursiveCharacterTextSplitter  # 把长文本切成小块
+from langchain_community.vectorstores import (
+    FAISS,
+)  # 向量数据库 (存切块后的内容, 方便快速搜索)
 from langchain_openai import OpenAIEmbeddings
 import dotenv
 

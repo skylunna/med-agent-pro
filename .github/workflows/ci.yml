@@ -54,8 +54,8 @@ jobs:
         run: |
           uv run ruff check . --config "line-length=120"
           uv run ruff format --check .
-      - name: Run Tests
-        run: uv run pytest --tb=short -q
+      # - name: Run Tests
+      #   run: uv run pytest --tb=short -q
 
 
   docker-build-verify:

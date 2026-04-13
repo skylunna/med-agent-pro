@@ -69,19 +69,58 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	stream := r.URL.Query().Get("stream") == "true"
+
 	// 拿到 Python AI 服务的地址
 	pythonURL := os.Getenv("PYTHON_SERVICE_URL")
 	if pythonURL == "" {
-		pythonURL = "http://localhost:8001/agent/query"
+		pythonURL = "http://localhost:8001"
 	}
 
-	resp, err := http.Post(pythonURL, "application/json",
-		strings.NewReader(fmt.Sprintf(`{"question":"%s","session_id":"%s"}`, req.Question, req.SessionID)))
+	payload := fmt.Sprintf(`{"question": "%s", "session_id": "%s", "stream": %t}`, req.Question, req.SessionID, stream)
+	pythonReq, _ := http.NewRequest("POST", pythonURL+"/agent/rag_query", strings.NewReader(payload))
+	pythonReq.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(pythonReq)
+
 	if err != nil {
 		http.Error(w, `{"error":"ai service unavailable"}`, http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
+
+	if stream {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.WriteHeader(http.StatusOK)
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, `{"error":"streaming not supported"}`, http.StatusInternalServerError)
+			return
+		}
+
+		buf := make([]byte, 4096)
+		for {
+			n, readErr := resp.Body.Read(buf)
+			if n > 0 {
+				w.Write(buf[:n])
+				flusher.Flush()
+			}
+			if readErr != nil {
+				if readErr == io.EOF {
+					break
+				}
+				log.Printf("⚠️ Stream read error: %v", readErr)
+				break
+			}
+		}
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+		io.Copy(w, resp.Body)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	io.Copy(w, resp.Body)

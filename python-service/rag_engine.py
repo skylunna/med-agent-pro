@@ -8,6 +8,10 @@ import dotenv
 dotenv.load_dotenv()
 
 class MedicalRAG:
+    """
+    RAG
+        流程: 读文件 -> 切块 -> 转向量 -> 库存 -> 检索
+    """
     def __init__(self):
         # 复用 DashScope / 兼容 API 的 Embedding 服务
         self.embeddings= OpenAIEmbeddings(

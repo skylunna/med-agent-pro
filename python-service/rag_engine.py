@@ -7,23 +7,29 @@ import dotenv
 
 dotenv.load_dotenv()
 
+
 class MedicalRAG:
     """
     RAG
         流程: 读文件 -> 切块 -> 转向量 -> 库存 -> 检索
+
+        MedicalRAG: 将流程封装为一个类
     """
+
     def __init__(self):
         # 复用 DashScope / 兼容 API 的 Embedding 服务
-        self.embeddings= OpenAIEmbeddings(
+        self.embeddings = OpenAIEmbeddings(
             model=os.getenv("EMBED_MODEL", "text-embedding-v3"),
             openai_api_key=os.getenv("LLM_API_KEY"),
-            openai_api_base=os.getenv("LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            openai_api_base=os.getenv(
+                "LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            ),
         )
 
         self.splitter = RecursiveCharacterTextSplitter(
             chunk_size=400,
             chunk_overlap=60,
-            separators=["\n\n", "\n", "。", "！", "？", "；", "，", " "]
+            separators=["\n\n", "\n", "。", "！", "？", "；", "，", " "],
         )
         self.db = None
 
@@ -40,4 +46,3 @@ class MedicalRAG:
         if not self.db:
             return []
         return self.db.similarity_search(query, k=k)
-        

@@ -15,11 +15,15 @@ import (
 )
 
 // 基于 session_id 的独立限流器 (生产环境可换 Redis)
+// 防止一个人刷爆请求
 var limiters sync.Map
 
-// 限流
+/*
+每个用户一个限流器
+*/
 func getLimiter(sessionID string) *rate.Limiter {
 	//给我拿到这个用户的专属限流器。是第一次来，就给他创建一个 “每秒 2 个请求” 的限流器，以后再来，都用同一个限流器。
+	// sync.map 自带的方法 LoadOrStore, 有就取出来，没有就存一个
 	limiter, _ := limiters.LoadOrStore(sessionID, rate.NewLimiter(2, 5)) // 2 req/s peek = 5
 	return limiter.(*rate.Limiter)
 }
@@ -34,6 +38,8 @@ func loggingMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // 限流中间件
+// 必须传 X-Session-ID
+// 超过限制直接返回429限流
 func rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := r.Header.Get("X-Session-ID")
@@ -69,6 +75,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 判断是否流式输出
 	stream := r.URL.Query().Get("stream") == "true"
 
 	// 拿到 Python AI 服务的地址

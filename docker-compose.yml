@@ -1,0 +1,48 @@
+version: '3.8'
+services:
+  gateway:
+    build: ./go-gateway
+    container_name: med-gateway
+    ports: ["8080:8080"]
+    environment: [PYTHON_SERVICE_URL=http://ai-engine:8001]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  ai-engine:
+    build: ./python-service
+    container_name: med-ai-engine
+    ports: ["8001:8001"]
+    environment:
+      - LLM_BASE_URL=${LLM_BASE_URL}
+      - LLM_MODEL=${LLM_MODEL}
+      - LLM_API_KEY=${LLM_API_KEY}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # 🚀 vLLM 本地部署配置（开发机资源受限已注释，生产环境取消注释）
+  # vllm:
+  #   image: vllm/vllm-openai:latest
+  #   ports: ["8002:8000"]
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+  #   command: >
+  #     --model Qwen/Qwen2.5-7B-Instruct
+  #     --max-model-len 4096
+  #     --gpu-memory-utilization 0.85
+  #     --quantization awq
+  #     --enable-prefix-caching
+  #   volumes: [hf_cache:/root/.cache/huggingface]
+  # volumes: [hf_cache:]

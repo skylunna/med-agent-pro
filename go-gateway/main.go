@@ -28,12 +28,21 @@ func getLimiter(sessionID string) *rate.Limiter {
 	return limiter.(*rate.Limiter)
 }
 
+func maskSession(id string) string {
+	if len(id) < 6 {
+		return id
+	}
+	return id[:3] + "***" + id[len(id)-3:]
+}
+
 // 计时 + 打印日志
 func loggingMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		session := r.Header.Get("X-Session-ID")
 		next(w, r)
-		log.Printf("[%s] %s %s %v", r.Method, r.URL.Path, r.RemoteAddr, time.Since(start))
+		log.Printf("[%s] %s %s session=%s latency=%v",
+			r.Method, r.URL.Path, r.RemoteAddr, maskSession(session), time.Since(start))
 	}
 }
 
@@ -69,6 +78,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Question  string `json:"question"`
 		SessionID string `json:"session_id"`
+		Stream    bool   `json:"stream"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
@@ -76,7 +86,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 判断是否流式输出
-	stream := r.URL.Query().Get("stream") == "true"
+	// stream := r.URL.Query().Get("stream") == "true"
 
 	// 拿到 Python AI 服务的地址
 	pythonURL := os.Getenv("PYTHON_SERVICE_URL")
@@ -84,12 +94,18 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		pythonURL = "http://localhost:8001"
 	}
 
-	payload := fmt.Sprintf(`{"question": "%s", "session_id": "%s", "stream": %t}`, req.Question, req.SessionID, stream)
-	pythonReq, _ := http.NewRequest("POST", pythonURL+"/agent/rag_query", strings.NewReader(payload))
-	pythonReq.Header.Set("Content-Type", "application/json")
+	targetURL := fmt.Sprintf("%s/agent/rag_query", pythonURL)
+	payload := fmt.Sprintf(`{"question":"%s","session_id":"%s","stream":%t}`,
+		req.Question, req.SessionID, req.Stream)
 
+	httpReq, err := http.NewRequest("POST", targetURL, strings.NewReader(payload))
+	if err != nil {
+		http.Error(w, `{"error":"ai_service_unavailable"}`, http.StatusBadGateway)
+		return
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(pythonReq)
+	resp, err := client.Do(httpReq)
 
 	if err != nil {
 		http.Error(w, `{"error":"ai service unavailable"}`, http.StatusBadGateway)
@@ -97,7 +113,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	if stream {
+	if req.Stream {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
@@ -133,10 +149,16 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, resp.Body)
 }
 
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"ok","service":"go-gateway","mode":"cloud-first"}`))
+}
+
 func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/chat", loggingMiddleware(rateLimitMiddleware(chatHandler)))
+	mux.HandleFunc("/health", healthHandler)
 
-	log.Println("🚀 Go Gateway running on : 8080")
+	log.Println("🚀 Go Gateway running on :8080 (Cloud-First Mode)")
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }

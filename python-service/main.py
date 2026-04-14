@@ -8,7 +8,7 @@ from rag_engine import MedicalRAG
 
 dotenv.load_dotenv()
 # 启动一个 Web 服务
-app = FastAPI(title="Python AI Engine", version="0.2.0")
+app = FastAPI(title="Python AI Engine", version="0.3.0-cloud")
 
 client = AsyncOpenAI(
     api_key=os.getenv("LLM_API_KEY"),
@@ -20,6 +20,11 @@ client = AsyncOpenAI(
 # 创建 RAG 检索对象
 rag = MedicalRAG()
 
+# 医疗合规常量
+# 免责声明
+DISCLAIMER = "【重要提示】本内容由AI辅助生成，仅用于医学知识科普与参考，不可替代执业医师面诊与临床决策。"
+RISK_KEYWORDS = ["治愈", "保证", "绝对有效", "根除", "100%"]
+
 
 @app.on_event("startup")
 async def startup():
@@ -29,13 +34,11 @@ async def startup():
         自动切块、转向量、存入向量库
         不用手动调用 ingest
     """
-    try:
-        if os.path.exists("data/medical_guide.txt"):
-            rag.ingest("data/medical_guide.txt")
-        else:
-            print("⚠️ 未找到医学数据，RAG 将降级为通用模式")
-    except Exception as e:
-        print(f"🔍 RAG 初始化警告: {e}")
+    data_path = os.getenv("RAG_DATA_PATH", "data/medical_guide.txt")
+    if os.path.exists(data_path):
+        if os.path.exists(data_path):
+            rag.ingest(data_path)
+        print("✅ AI Engine started. Mode: Cloud API | RAG: Active")
 
 
 class QueryRequest(BaseModel):
@@ -45,7 +48,17 @@ class QueryRequest(BaseModel):
 
     question: str
     session_id: str
-    stream: bool = False
+    stream: bool = True
+
+
+def check_medical_safety(text: str, has_refs: bool) -> dict:
+    """轻量级合规校验 (生产环境可接医学知识图谱)"""
+    warnings = []
+    if any(kw in text for kw in RISK_KEYWORDS):
+        warnings.append("⚠️ 检测到绝对化表述，已自动标注")
+    if not has_refs:
+        warnings.append("⚠️ 参考资料不足，回答仅供参考")
+    return {"safe": len(warnings) == 0, "warnings": warnings}
 
 
 async def generate_sse(req: QueryRequest):
@@ -71,37 +84,64 @@ async def generate_sse(req: QueryRequest):
     # [2] xxxx
     # "\n".join(...) 把 3 段文字用换行符连接起来，让AI看得更清晰
     context = "\n".join([f"[{i + 1}] {d.page_content}" for i, d in enumerate(docs)])
-    system_prompt = f"""你是一个专业的肿瘤医学助手。请严格基于以下参考资料回答问题。
+    has_context = bool(context.strip())
+
+    system_prompt = f"""你是一名专业的肿瘤医学辅助助手。请严格基于以下参考资料回答问题。
 参考资料：
-{context if context else "暂无参考资料。请基于通用医学知识谨慎回答，并明确标注“仅供参考，不替代临床诊断”。"}
-要求：1. 分点清晰 2. 如资料不足请明确说明 3. 末尾列出参考来源编号"""
+{context if has_context else "暂无相关资料。请基于通用医学知识谨慎回答，并明确说明局限性。"}
+要求：
+1. 分点清晰，逻辑严谨
+2. 必须在回答末尾引用来源编号，如 [1]、[2]
+3. 禁止使用绝对化医疗承诺用语
+4. 保持专业、客观、谨慎"""
 
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": req.question},
     ]
 
-    # 2. 流式调用 LLM
-    response = await client.chat.completions.create(
-        model=os.getenv("LLM_MODEL", "qwen-turbo"),
-        messages=messages,
-        stream=True,
-        temperature=0.6,
-        max_tokens=1024,
-    )
-    # 流式输出
-    async for chunk in response:
-        if chunk.choices and chunk.choices[0].delta.content:
-            yield f"data: {chunk.choices[0].delta.content}\n\n"
-    yield " [DONE]\n\n"
+    # 3. 强制注入免责声明（首行）
+    yield f"data: {DISCLAIMER}\n\n"
+
+    # 4. 调用云端 LLM (流式)
+    # 💡 迁移至本地 vLLM 只需改 base_url 为 http://vllm:8000/v1，业务逻辑零修改
+    try:
+        response = await client.chat.completions.create(
+            model=os.getenv("LLM_MODEL", "qwen-turbo"),
+            messages=messages,
+            stream=True,
+            temperature=0.6,
+            max_tokens=1024,
+            timeout=30.0,
+        )
+
+        full_answer = ""
+        async for chunk in response:
+            if chunk.choices and chunk.choices[0].delta.content:
+                token = chunk.choices[0].delta.content
+                full_answer += token
+                yield f"data: {token}\n\n"
+
+        # 5. 生成后合规校验
+        has_ref = any(f"[{i}]" in full_answer for i in range(1, 4))
+        safety = check_medical_safety(full_answer, has_ref)
+        if safety["warnings"]:
+            for w in safety["warnings"]:
+                yield f"data: \n{w}\n\n"
+
+    except Exception as e:
+        yield f"data: \n⚠️ AI 服务调用异常: {str(e)}\n\n"
+
+    yield "data: [DONE]\n\n"
 
 
 @app.post("/agent/rag_query")
 async def rag_query(req: QueryRequest):
-    """
-    POST接口
-    前端调用这个接口就能获得AI流式回答
-    """
     if not req.question.strip():
-        raise HTTPException(400, "Question cannot be empty")
+        raise HTTPException(status_code=400, detail="问题不能为空")
     return StreamingResponse(generate_sse(req), media_type="text/event-stream")
+
+
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "service": "ai-engine", "mode": "cloud"}
